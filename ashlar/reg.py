@@ -28,9 +28,9 @@ from . import __version__ as _version
 
 if not jnius_config.vm_running:
     pkg_root = pathlib.Path(__file__).parent.resolve()
-    bf_jar_path = pkg_root / 'jars' / 'loci_tools.jar'
+    bf_jar_path = pkg_root / 'jars' / 'bioformats_package.jar'
     if not bf_jar_path.exists():
-        raise RuntimeError("loci_tools.jar missing from distribution"
+        raise RuntimeError("bioformats_package.jar missing from distribution"
                            " (expected it at %s)" % bf_jar_path)
     jnius_config.add_classpath(str(bf_jar_path))
     # These settings constrain the memory used by BioFormats to near the minimum
@@ -48,7 +48,7 @@ OMEXMLService = jnius.autoclass('loci.formats.services.OMEXMLService')
 ChannelSeparator = jnius.autoclass('loci.formats.ChannelSeparator')
 DynamicMetadataOptions = jnius.autoclass('loci.formats.in.DynamicMetadataOptions')
 UNITS = jnius.autoclass('ome.units.UNITS')
-DebugTools.enableLogging("ERROR")
+DebugTools.setRootLevel("ERROR")
 
 
 # TODO:
@@ -378,9 +378,13 @@ class BioformatsMetadata(PlateMetadata):
                 value = v.doubleValue()
             values.append(value)
         position_microns = np.array(values, dtype=float)
-        # Invert Y so that stage position coordinates and image pixel
-        # coordinates are aligned (most formats seem to work this way).
-        position_microns *= [-1, 1]
+        # Flip the y-axis of the stage coordinate system to align it with the
+        # image coordinate system, as seems to be required for most formats.
+        # Skip this for any formats known not to require it.
+        if self.format_name not in (
+            "InCell 1000/2000", # As of Bioformats 6.4.0
+        ):
+            position_microns *= [-1, 1]
         position_pixels = position_microns / self.pixel_size
         return position_pixels
 
@@ -404,7 +408,8 @@ class BioformatsReader(PlateReader):
         self.metadata._reader.setSeries(self.metadata.active_series[series])
         index = self.metadata._reader.getIndex(0, c, 0)
         byte_array = self.metadata._reader.openBytes(index)
-        dtype = self.metadata.pixel_dtype
+        endian = "<" if self.metadata._reader.isLittleEndian() else ">"
+        dtype = self.metadata.pixel_dtype.newbyteorder(endian)
         shape = self.metadata.tile_size(series)
         img = np.frombuffer(byte_array.tostring(), dtype=dtype).reshape(shape)
         return img
@@ -434,6 +439,15 @@ class CachingReader(Reader):
     def __init__(self, reader, channel):
         self.reader = reader
         self.channel = channel
+        self._cache = {}
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_cache']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
         self._cache = {}
 
     @property
@@ -1024,7 +1038,7 @@ class Mosaic(object):
     def __init__(
         self, aligner, shape, channels=None, ffp_path=None, dfp_path=None,
         flip_mosaic_x=False, flip_mosaic_y=False, barrel_correction=None,
-        verbose=False
+        pastefunc = utils.pastefunc_blend, verbose=False
     ):
         self.aligner = aligner
         self.shape = tuple(shape)
@@ -1035,6 +1049,7 @@ class Mosaic(object):
         self.dtype = aligner.metadata.pixel_dtype
         self._load_correction_profiles(dfp_path, ffp_path)
         self.verbose = verbose
+        self.pastefunc = pastefunc
 
     def _sanitize_channels(self, channels):
         all_channels = range(self.aligner.metadata.num_channels)
@@ -1135,7 +1150,7 @@ class Mosaic(object):
                 sys.stdout.flush()
             img = self.aligner.reader.read(c=channel, series=si)
             img = self.correct_illumination(img, channel)
-            utils.paste(out, img, position, func=utils.pastefunc_blend)
+            utils.paste(out, img, position, func=self.pastefunc)
         # Memory-conserving axis flips.
         if self.flip_mosaic_x:
             for i in range(len(out)):
@@ -1281,7 +1296,8 @@ class PyramidWriter:
                 subifds=int(self.num_levels - 1),
                 dtype=dtype,
                 tile=self.tile_shapes[0],
-                resolution=(resolution_cm, resolution_cm, "centimeter"),
+                resolution=(resolution_cm, resolution_cm),
+                resolutionunit="centimeter",
                 # FIXME Propagate this from input files (especially RGB).
                 photometric="minisblack",
                 compression="adobe_deflate",
