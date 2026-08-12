@@ -695,7 +695,7 @@ class EdgeAligner(object):
         if np.linalg.det(self.lr.coef_) < 1e-3:
             # FIXME We should probably exit here, not just warn. We may provide
             # an option to force it anyway.
-            warn_data(
+            raise ValueError(
                 "Could not align enough edges, proceeding anyway with original"
                 " stage positions."
             )

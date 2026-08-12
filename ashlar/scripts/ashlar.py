@@ -1,9 +1,12 @@
+import csv
 import warnings
 import sys
 import re
 import argparse
 import pathlib
 import blessed
+
+from ashlar.bioio_reader import BioIOReader
 from .. import __version__ as VERSION
 from .. import reg
 from ..reg import PlateReader, BioformatsReader
@@ -13,7 +16,6 @@ from ..zen import ZenReader
 
 
 def main(argv=sys.argv):
-
     parser = argparse.ArgumentParser(
         description='Stitch and align multi-tile cyclic microscope images',
         formatter_class=HelpFormatter,
@@ -66,8 +68,8 @@ def main(argv=sys.argv):
     parser.add_argument(
         "--stitch-alpha", type=float, default=0.01, metavar="ALPHA",
         help="Significance level for permutation testing during alignment error"
-        " quantification. Larger values include more tile pairs in the spanning"
-        " tree at the cost of increased false positives."
+             " quantification. Larger values include more tile pairs in the spanning"
+             " tree at the cost of increased false positives."
     )
     parser.add_argument(
         "--maximum-error", type=float, default=None, help=argparse.SUPPRESS,
@@ -116,13 +118,17 @@ def main(argv=sys.argv):
     parser.add_argument(
         '--version', action='version', version=f"ashlar {VERSION}"
     )
+    parser.add_argument(
+        '--positions',
+        help='Path to save tile positions',
+    )
     args = parser.parse_args(argv[1:])
 
     configure_terminal()
     configure_warning_format()
 
     filepaths = args.filepaths
-
+    positions_path = args.positions
     output_path = pathlib.Path(args.output)
     op_tiff = bool(re.search(r"\.tiff?$", output_path.name, re.IGNORECASE))
     ff_default = args.filename_format == parser.get_default("filename_format")
@@ -226,7 +232,7 @@ def main(argv=sys.argv):
             return process_single(
                 filepaths, mosaic_path_format, args.flip_x, args.flip_y,
                 ffp_paths, dfp_paths, args.barrel_correction, aligner_args,
-                mosaic_args, args.pyramid, args.quiet
+                mosaic_args, args.pyramid, args.quiet, positions_path
             )
     except ProcessingError as e:
         print_error(str(e))
@@ -234,11 +240,10 @@ def main(argv=sys.argv):
 
 
 def process_single(
-    filepaths, output_path_format, flip_x, flip_y, ffp_paths, dfp_paths,
-    barrel_correction, aligner_args, mosaic_args, pyramid, quiet,
-    plate_well=None
+        filepaths, output_path_format, flip_x, flip_y, ffp_paths, dfp_paths,
+        barrel_correction, aligner_args, mosaic_args, pyramid, quiet,
+        plate_well=None, positions_path=None
 ):
-
     mosaic_args = mosaic_args.copy()
     writer_args = {}
     if pyramid:
@@ -294,15 +299,44 @@ def process_single(
         mosaics, output_path_format, verbose=not quiet, **writer_args
     )
     writer.run()
+    if positions_path is not None:
+        with open(positions_path, mode="w") as f:
+            pos_writer = csv.writer(f)
+            pos_writer.writerow(
+                [
+                    "Cycle",
+                    "Tile",
+                    "Source",
+                    "OriginalX",
+                    "OriginalY",
+                    "Y",
+                    "X",
+                    "YSize",
+                    "XSize",
+                    "PixelSize",
+                ]
+            )
+
+            for mosaic_index, mosaic in enumerate(mosaics):
+                orig_pos = mosaic.aligner.reader.metadata.positions
+                pos = mosaic.aligner.positions
+                pixel_size = mosaic.aligner.reader.metadata.pixel_size
+                size = mosaic.aligner.reader.metadata.size
+
+                for pos_index, ((oy, ox), (y, x)) in enumerate(zip(orig_pos, pos)):
+                    tile = mosaic.aligner.reader.get_tile(pos_index) if isinstance(mosaic.aligner.reader,
+                                                                                   BioIOReader) else ""
+
+                    pos_writer.writerow(
+                        [mosaic_index, pos_index, tile, ox, oy, y, x, size[0], size[1], pixel_size])
 
     return 0
 
 
 def process_plates(
-    filepaths, output_path, filename_format, flip_x, flip_y, ffp_paths,
-    dfp_paths, barrel_correction, aligner_args, mosaic_args, pyramid, quiet
+        filepaths, output_path, filename_format, flip_x, flip_y, ffp_paths,
+        dfp_paths, barrel_correction, aligner_args, mosaic_args, pyramid, quiet
 ):
-
     temp_reader = build_reader(filepaths[0])
     metadata = temp_reader.metadata
     if metadata.num_plates == 0:
@@ -349,7 +383,9 @@ readers = {
     'fileseries': FileSeriesReader,
     'bioformats': BioformatsReader,
     'zen': ZenReader,
+    'bioio': BioIOReader,
 }
+
 
 # This is a short-term hack to provide a way to specify alternate reader
 # classes and pass specific args to them.
@@ -427,10 +463,10 @@ class HelpFormatter(argparse.HelpFormatter):
         if isinstance(action, (argparse._HelpAction, argparse._VersionAction)):
             help = help.capitalize()
         elif (
-            not isinstance(action, argparse._StoreTrueAction)
-            and "%(default)" not in help
-            and "(default:" not in help
-            and action.default is not argparse.SUPPRESS
+                not isinstance(action, argparse._StoreTrueAction)
+                and "%(default)" not in help
+                and "(default:" not in help
+                and action.default is not argparse.SUPPRESS
         ):
             defaulting_nargs = [argparse.OPTIONAL, argparse.ZERO_OR_MORE]
             if action.option_strings or action.nargs in defaulting_nargs:
