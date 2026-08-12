@@ -232,11 +232,6 @@ class BioIOReader(Reader):
         self.z_index = kwargs.get("z", "max")
         self.metadata = BioImageIOMetadata(self.paths)
 
-    def __del__(self):
-        for path in self.paths:
-            if path is not None:
-                os.remove(path)
-
     def get_tile(self, i):
         index = i if len(self.paths) > 1 else 0
         return self.paths[index]
