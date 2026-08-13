@@ -122,6 +122,10 @@ def main(argv=sys.argv):
         '--positions',
         help='Path to save tile positions',
     )
+    parser.add_argument(
+        '--no-save-image',
+        action='store_true', help='Do not save image',
+    )
     args = parser.parse_args(argv[1:])
 
     configure_terminal()
@@ -129,6 +133,7 @@ def main(argv=sys.argv):
 
     filepaths = args.filepaths
     positions_path = args.positions
+    no_save_image = args.no_save_image
     output_path = pathlib.Path(args.output)
     op_tiff = bool(re.search(r"\.tiff?$", output_path.name, re.IGNORECASE))
     ff_default = args.filename_format == parser.get_default("filename_format")
@@ -232,7 +237,7 @@ def main(argv=sys.argv):
             return process_single(
                 filepaths, mosaic_path_format, args.flip_x, args.flip_y,
                 ffp_paths, dfp_paths, args.barrel_correction, aligner_args,
-                mosaic_args, args.pyramid, args.quiet, positions_path
+                mosaic_args, args.pyramid, args.quiet, positions_path, no_save_image
             )
     except ProcessingError as e:
         print_error(str(e))
@@ -242,7 +247,7 @@ def main(argv=sys.argv):
 def process_single(
         filepaths, output_path_format, flip_x, flip_y, ffp_paths, dfp_paths,
         barrel_correction, aligner_args, mosaic_args, pyramid, quiet,
-        plate_well=None, positions_path=None
+        plate_well=None, positions_path=None, no_save_image=False
 ):
     mosaic_args = mosaic_args.copy()
     writer_args = {}
@@ -294,11 +299,12 @@ def process_single(
     if not quiet:
         print()
         print(f"Merging tiles and writing to {output_path_format}")
-    writer_class = reg.PyramidWriter if pyramid else reg.TiffListWriter
-    writer = writer_class(
-        mosaics, output_path_format, verbose=not quiet, **writer_args
-    )
-    writer.run()
+    if not no_save_image:
+        writer_class = reg.PyramidWriter if pyramid else reg.TiffListWriter
+        writer = writer_class(
+            mosaics, output_path_format, verbose=not quiet, **writer_args
+        )
+        writer.run()
     if positions_path is not None:
         with open(positions_path, mode="w") as f:
             pos_writer = csv.writer(f)
