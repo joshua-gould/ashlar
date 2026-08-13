@@ -230,14 +230,14 @@ def main(argv=sys.argv):
             return process_plates(
                 filepaths, output_path, args.filename_format, args.flip_x,
                 args.flip_y, ffp_paths, dfp_paths, args.barrel_correction,
-                aligner_args, mosaic_args, args.pyramid, args.quiet
+                aligner_args, mosaic_args, args.pyramid, args.quiet,
             )
         else:
             mosaic_path_format = str(output_path / args.filename_format)
             return process_single(
                 filepaths, mosaic_path_format, args.flip_x, args.flip_y,
                 ffp_paths, dfp_paths, args.barrel_correction, aligner_args,
-                mosaic_args, args.pyramid, args.quiet, positions_path, no_save_image
+                mosaic_args, args.pyramid, args.quiet, positions_path=positions_path, no_save_image=no_save_image
             )
     except ProcessingError as e:
         print_error(str(e))
@@ -305,7 +305,7 @@ def process_single(
             mosaics, output_path_format, verbose=not quiet, **writer_args
         )
         writer.run()
-    if positions_path is not None:
+    if positions_path is not None and positions_path != "":
         with open(positions_path, mode="w") as f:
             pos_writer = csv.writer(f)
             pos_writer.writerow(
