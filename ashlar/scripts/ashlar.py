@@ -296,10 +296,10 @@ def process_single(
     # Disable reader caching to save memory during mosaicing and writing.
     edge_aligner.reader = edge_aligner.reader.reader
 
-    if not quiet:
-        print()
-        print(f"Merging tiles and writing to {output_path_format}")
     if not no_save_image:
+        if not quiet:
+            print()
+            print(f"Merging tiles and writing to {output_path_format}")
         writer_class = reg.PyramidWriter if pyramid else reg.TiffListWriter
         writer = writer_class(
             mosaics, output_path_format, verbose=not quiet, **writer_args
