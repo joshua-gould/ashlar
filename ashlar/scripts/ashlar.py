@@ -1,17 +1,18 @@
-import csv
-import warnings
-import sys
-import re
 import argparse
+import csv
 import pathlib
+import re
+import sys
+import warnings
+
 import blessed
 
 from ashlar.bioio_reader import BioIOReader
 from .. import __version__ as VERSION
 from .. import reg
-from ..reg import PlateReader, BioformatsReader
 from ..filepattern import FilePatternReader
 from ..fileseries import FileSeriesReader
+from ..reg import PlateReader, BioformatsReader
 from ..zen import ZenReader
 
 
@@ -48,6 +49,11 @@ def main(argv=sys.argv):
         '--flip-y', default=False, action='store_true',
         help='Flip tile positions top-to-bottom',
     )
+    parser.add_argument(
+        '--swap-axes', default=False, action='store_true',
+        help='Swap axes',
+    )
+
     parser.add_argument(
         '--flip-mosaic-x', default=False, action='store_true',
         help='Flip output image left-to-right',
@@ -229,13 +235,13 @@ def main(argv=sys.argv):
         if args.plates:
             return process_plates(
                 filepaths, output_path, args.filename_format, args.flip_x,
-                args.flip_y, ffp_paths, dfp_paths, args.barrel_correction,
+                args.flip_y, args.swap_axes, ffp_paths, dfp_paths, args.barrel_correction,
                 aligner_args, mosaic_args, args.pyramid, args.quiet,
             )
         else:
             mosaic_path_format = str(output_path / args.filename_format)
             return process_single(
-                filepaths, mosaic_path_format, args.flip_x, args.flip_y,
+                filepaths, mosaic_path_format, args.flip_x, args.flip_y, args.swap_axes,
                 ffp_paths, dfp_paths, args.barrel_correction, aligner_args,
                 mosaic_args, args.pyramid, args.quiet, positions_path=positions_path, no_save_image=no_save_image
             )
@@ -245,7 +251,7 @@ def main(argv=sys.argv):
 
 
 def process_single(
-        filepaths, output_path_format, flip_x, flip_y, ffp_paths, dfp_paths,
+        filepaths, output_path_format, flip_x, flip_y, swap_axes, ffp_paths, dfp_paths,
         barrel_correction, aligner_args, mosaic_args, pyramid, quiet,
         plate_well=None, positions_path=None, no_save_image=False
 ):
@@ -262,7 +268,7 @@ def process_single(
         print('Cycle 0:')
         print('    reading %s' % filepaths[0])
     reader = build_reader(filepaths[0], barrel_correction, plate_well=plate_well)
-    process_axis_flip(reader, flip_x, flip_y)
+    process_axis_flip(reader, flip_x, flip_y, swap_axes)
     ea_args = aligner_args.copy()
     for arg in ("alpha", "max_error"):
         aligner_args.pop(arg, None)
@@ -283,7 +289,7 @@ def process_single(
             print('Cycle %d:' % cycle)
             print('    reading %s' % filepath)
         reader = build_reader(filepath, barrel_correction, plate_well=plate_well)
-        process_axis_flip(reader, flip_x, flip_y)
+        process_axis_flip(reader, flip_x, flip_y, swap_axes)
         layer_aligner = reg.LayerAligner(reader, edge_aligner, **aligner_args)
         layer_aligner.run()
         mosaic_args_final = mosaic_args.copy()
@@ -340,7 +346,7 @@ def process_single(
 
 
 def process_plates(
-        filepaths, output_path, filename_format, flip_x, flip_y, ffp_paths,
+        filepaths, output_path, filename_format, flip_x, flip_y, swap_axes, ffp_paths,
         dfp_paths, barrel_correction, aligner_args, mosaic_args, pyramid, quiet
 ):
     temp_reader = build_reader(filepaths[0])
@@ -363,7 +369,7 @@ def process_plates(
                 out_file_path.parent.mkdir(parents=True, exist_ok=True)
                 mosaic_path_format = str(out_file_path)
                 process_single(
-                    filepaths, mosaic_path_format, flip_x, flip_y,
+                    filepaths, mosaic_path_format, flip_x, flip_y, swap_axes,
                     ffp_paths, dfp_paths, barrel_correction, aligner_args,
                     mosaic_args, pyramid, quiet, plate_well=(p, w)
                 )
@@ -375,10 +381,13 @@ def process_plates(
     return 0
 
 
-def process_axis_flip(reader, flip_x, flip_y):
+def process_axis_flip(reader, flip_x, flip_y, swap):
     metadata = reader.metadata
     # Trigger lazy initialization.
     _ = metadata.positions
+    if swap:
+        metadata._positions = metadata._positions[:, [1, 0]]
+
     sx = -1 if flip_x else 1
     sy = -1 if flip_y else 1
     metadata._positions *= [sy, sx]
